@@ -7,16 +7,13 @@ Details TBA
    * See examples/main.go for details
 ```
 Received request:
-"Generate 100 rows of dummy data for a table that has id, name, and email columns."
+"Create 149 dummy cookie recipes using this JSON schema: Recipe = {'recipeName': string} Return: Array<Recipe>"
 
 Received function call response:
-{"promptParser" map["prompt":"Generate a table with id, name, and email columns." "rows":%!q(float64=100)]}
+{"promptParser" map["counter":%!q(float64=8) "prompt":"Create 20 dummy cookie recipes using this JSON schema: Recipe = {\\'recipeName\\': string} Return: Array<Recipe>"]}
 
-Executing function call response:
-map["prompt":"Generate a table with id, name, and email columns." "rows":%!q(float64=100)]
-
-Received response:
-{promptParser map[prompt:Generate a table with id, name and email columns rows:100]}
+Calling actual function for one time only:
+[{"recipeName": "Chocolate Chip Cookies"}, {"recipeName": "Oatmeal Raisin Cookies"}, {"recipeName": "Peanut Butter Cookies"}, {"recipeName": "Snickerdoodles"}, {"recipeName": "Sugar Cookies"}, {"recipeName": "Gingerbread Cookies"}, {"recipeName": "Shortbread Cookies"}, {"recipeName": "Macarons"}, {"recipeName": "Brownies"}, {"recipeName": "Biscotti"}, {"recipeName": "Lemon Bars"}, {"recipeName": "Toffee Cookies"}, {"recipeName": "Gingersnaps"}, {"recipeName": "Peanut Butter Blossoms"}, {"recipeName": "Thumbprint Cookies"}, {"recipeName": "Linzer Cookies"}, {"recipeName": "Rugelach"}, {"recipeName": "Alfajores"}, {"recipeName": "Madeleines"}, {"recipeName": "Palmiers"}]
 
 -- parallelize the data generation process --
 ```

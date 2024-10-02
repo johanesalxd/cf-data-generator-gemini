@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"os"
 
 	"cloud.google.com/go/vertexai/genai"
@@ -21,12 +22,12 @@ func main() {
 						Type:        genai.TypeString,
 						Description: "Actual prompt to generate a single answer (and omitting the number of rows to generate)",
 					},
-					"rows": {
+					"counter": {
 						Type:        genai.TypeInteger,
-						Description: "Number of rows to generate",
+						Description: "How many times the prompt should be executed, at minimum, to process all the rows (+1 if needed to cover the remainder)",
 					},
 				},
-				Required: []string{"prompt", "rows"},
+				Required: []string{"prompt", "counter"},
 			},
 		}},
 	}
@@ -37,21 +38,29 @@ func main() {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 
+	properties := map[string]int{
+		"totalRows":   101,
+		"rowsPerCall": 20,
+		"counter":     0,
+	}
+	properties["counter"] = int(math.Ceil(float64(properties["totalRows"]) / float64(properties["rowsPerCall"])))
+	systemInstruction := fmt.Sprintf(`You are a built-in tool to parse the user's prompt to generate a dummy data. Your task is to create an array of prompts, each of which will be used to generate a chunk of dummy data (maximum of %d rows per call) to avoid running into the token limit for the model.
+	
+	For example:
+	User: "Generate %d rows of dummy data for a table that has id, name, and email columns using this JSON schema: Data = {"id": "integer", "name": "string", "email": "string"} Return: Array<Data>"
+	
+	You: "{\"prompt\": \"Generate %d rows of dummy data for a table that has id, name, and email columns using this JSON schema: Data = {\"id\": \"integer\", \"name\": \"string\", \"email\": \"string\"} Return: Array<Data>\", \"counter\": %d}
+	`, properties["rowsPerCall"], properties["totalRows"], properties["totalRows"], properties["counter"])
 	model := client.GenerativeModel("gemini-1.5-flash-002")
 	model.Tools = []*genai.Tool{promptParser}
 	model.SystemInstruction = &genai.Content{
 		Parts: []genai.Part{
-			genai.Text(`You are a built-in tool to parse the user's prompt to generate a dummy data. So you need to separate between the actual prompt and number of rows to generate.
-
-			For example:
-			User: "Generate 100 rows of dummy data for a table that has id, name, and email columns."
-			You: "{\"prompt\": \"Generate a table with id, name, and email columns.\", \"rows\": 100}"
-			`),
+			genai.Text(systemInstruction),
 		},
 	}
 	session := model.StartChat()
 
-	prompt := "Generate 100 rows of dummy data for a table that has id, name, and email columns."
+	prompt := `Create 149 dummy cookie recipes using this JSON schema: Recipe = {'recipeName': string} Return: Array<Recipe>`
 	resp, err := session.SendMessage(ctx, genai.Text(prompt))
 	if err != nil {
 		log.Fatalf("Error sending message: %v\n", err)
@@ -68,24 +77,35 @@ func main() {
 	}
 	fmt.Printf("Received function call response:\n%q\n\n", part)
 
-	apiResult := setPrompt(funcall.Args)
-	fmt.Printf("Executing function call response:\n%q\n\n", apiResult)
-	resp, err = session.SendMessage(ctx, genai.FunctionResponse{
-		Name:     promptParser.FunctionDeclarations[0].Name,
-		Response: apiResult,
-	})
+	apiResult, err := setPrompt(ctx, client, funcall.Args)
 	if err != nil {
-		log.Fatalf("Error sending message: %v\n", err)
+		log.Fatalf("Error setting prompt: %v", err)
 	}
-
-	for _, part := range resp.Candidates[0].Content.Parts {
-		fmt.Printf("Received response:\n%v\n\n", part)
-	}
+	fmt.Printf("Calling actual function for one time only:\n")
+	printResponse(apiResult)
 }
 
-func setPrompt(input map[string]any) map[string]any {
-	return map[string]any{
-		"prompt": input["prompt"],
-		"rows":   input["rows"],
+func setPrompt(ctx context.Context, client *genai.Client, input map[string]any) (*genai.GenerateContentResponse, error) {
+	model := client.GenerativeModel("gemini-1.5-flash-002")
+	model.ResponseMIMEType = "application/json"
+
+	// Generate content using the configured model
+	prompt := fmt.Sprintf("%v", input["prompt"])
+	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+	if err != nil {
+		return nil, fmt.Errorf("error generating text: %w", err)
 	}
+
+	return resp, nil
+}
+
+func printResponse(resp *genai.GenerateContentResponse) {
+	for _, cand := range resp.Candidates {
+		if cand.Content != nil {
+			for _, part := range cand.Content.Parts {
+				fmt.Println(part)
+			}
+		}
+	}
+	fmt.Println("---")
 }
