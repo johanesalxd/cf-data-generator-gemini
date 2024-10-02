@@ -3,8 +3,24 @@ Data Generator with Gemini (Cloud Run functions)
 Details TBA
 
 # TODO
-* //TODO: add function calling to parse the first response (e.g., to set max # of rows to be generated) and then process the actual request
-* //TODO: add SQLite/DuckDB integration to dedup the data
+1. //TODO: add function calling to parse the first response (e.g., to set max # of rows to be generated) and then process the actual request
+   * See examples/main.go for details
+```
+Received request:
+"Generate 100 rows of dummy data for a table that has id, name, and email columns."
+
+Received function call response:
+{"promptParser" map["prompt":"Generate a table with id, name, and email columns." "rows":%!q(float64=100)]}
+
+Executing function call response:
+map["prompt":"Generate a table with id, name, and email columns." "rows":%!q(float64=100)]
+
+Received response:
+{promptParser map[prompt:Generate a table with id, name and email columns rows:100]}
+
+-- parallelize the data generation process --
+```
+2. //TODO: add SQLite/DuckDB integration to dedup the data
 
 # How to run
 ## Run locally

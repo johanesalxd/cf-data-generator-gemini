@@ -10,87 +10,82 @@ import (
 )
 
 func main() {
-	lightControlTool := &genai.Tool{
+	promptParser := &genai.Tool{
 		FunctionDeclarations: []*genai.FunctionDeclaration{{
-			Name:        "controlLight",
-			Description: "Set the brightness and color temperature of a room light.",
+			Name:        "promptParser",
+			Description: "Prompt input parser to separate between the actual prompt and number of rows to generate",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
-					"brightness": {
-						Type: genai.TypeString,
-						Description: "Light level from 0 to 100. Zero is off and" +
-							" 100 is full brightness.",
+					"prompt": {
+						Type:        genai.TypeString,
+						Description: "Actual prompt to generate a single answer (and omitting the number of rows to generate)",
 					},
-					"colorTemperature": {
-						Type: genai.TypeString,
-						Description: "Color temperature of the light fixture which" +
-							" can be `daylight`, `cool` or `warm`.",
+					"rows": {
+						Type:        genai.TypeInteger,
+						Description: "Number of rows to generate",
 					},
 				},
-				Required: []string{"brightness", "colorTemperature"},
+				Required: []string{"prompt", "rows"},
 			},
 		}},
 	}
 
 	ctx := context.Background()
-
 	client, err := genai.NewClient(ctx, os.Getenv("PROJECT_ID"), os.Getenv("LOCATION"))
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 
-	// Use a model that supports function calling, like a Gemini 1.5 model
-	model := client.GenerativeModel("gemini-1.5-flash")
+	model := client.GenerativeModel("gemini-1.5-flash-002")
+	model.Tools = []*genai.Tool{promptParser}
+	model.SystemInstruction = &genai.Content{
+		Parts: []genai.Part{
+			genai.Text(`You are a built-in tool to parse the user's prompt to generate a dummy data. So you need to separate between the actual prompt and number of rows to generate.
 
-	// Specify the function declaration.
-	model.Tools = []*genai.Tool{lightControlTool}
-
-	// Start new chat session.
+			For example:
+			User: "Generate 100 rows of dummy data for a table that has id, name, and email columns."
+			You: "{\"prompt\": \"Generate a table with id, name, and email columns.\", \"rows\": 100}"
+			`),
+		},
+	}
 	session := model.StartChat()
 
-	prompt := "Dim the lights so the room feels cozy and warm."
-
-	// Send the message to the generative model.
+	prompt := "Generate 100 rows of dummy data for a table that has id, name, and email columns."
 	resp, err := session.SendMessage(ctx, genai.Text(prompt))
 	if err != nil {
 		log.Fatalf("Error sending message: %v\n", err)
 	}
+	fmt.Printf("Received request:\n%q\n\n", prompt)
 
-	// Check that you got the expected function call back.
 	part := resp.Candidates[0].Content.Parts[0]
 	funcall, ok := part.(genai.FunctionCall)
 	if !ok {
 		log.Fatalf("Expected type FunctionCall, got %T", part)
 	}
-	if g, e := funcall.Name, lightControlTool.FunctionDeclarations[0].Name; g != e {
+	if g, e := funcall.Name, promptParser.FunctionDeclarations[0].Name; g != e {
 		log.Fatalf("Expected FunctionCall.Name %q, got %q", e, g)
 	}
 	fmt.Printf("Received function call response:\n%q\n\n", part)
 
-	fmt.Printf("%v\n", funcall.Args)
-
-	apiResult := setLightValues(funcall.Args)
-
-	// Send the hypothetical API result back to the generative model.
-	fmt.Printf("Sending API result:\n%q\n\n", apiResult)
+	apiResult := setPrompt(funcall.Args)
+	fmt.Printf("Executing function call response:\n%q\n\n", apiResult)
 	resp, err = session.SendMessage(ctx, genai.FunctionResponse{
-		Name:     lightControlTool.FunctionDeclarations[0].Name,
+		Name:     promptParser.FunctionDeclarations[0].Name,
 		Response: apiResult,
 	})
 	if err != nil {
 		log.Fatalf("Error sending message: %v\n", err)
 	}
 
-	// Show the model's response, which is expected to be text.
 	for _, part := range resp.Candidates[0].Content.Parts {
-		fmt.Printf("%v\n", part)
+		fmt.Printf("Received response:\n%v\n\n", part)
 	}
 }
 
-func setLightValues(input map[string]any) map[string]any {
-	// This mock API returns the requested lighting values
+func setPrompt(input map[string]any) map[string]any {
 	return map[string]any{
-		"brightness":       input["brightness"],
-		"colorTemperature": input["colorTemperature"]}
+		"prompt": input["prompt"],
+		"rows":   input["rows"],
+	}
 }
