@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 	"os"
 
 	"cloud.google.com/go/vertexai/genai"
@@ -20,14 +19,18 @@ func main() {
 				Properties: map[string]*genai.Schema{
 					"prompt": {
 						Type:        genai.TypeString,
-						Description: "Actual prompt to generate a single answer (and omitting the number of rows to generate)",
+						Description: "Rewritten prompt with modified expected number of rows to be generated and follow the system instructions",
 					},
-					"counter": {
+					"totalRows": {
 						Type:        genai.TypeInteger,
-						Description: "How many times the prompt should be executed, at minimum, to process all the rows (+1 if needed to cover the remainder)",
+						Description: "The original number of rows requested in the prompts",
+					},
+					"newTotalRows": {
+						Type:        genai.TypeInteger,
+						Description: "The new number of rows given the limit that set in the system instructions",
 					},
 				},
-				Required: []string{"prompt", "counter"},
+				Required: []string{"prompt", "totalRows", "newTotalRows"},
 			},
 		}},
 	}
@@ -41,16 +44,14 @@ func main() {
 	properties := map[string]int{
 		"totalRows":   101,
 		"rowsPerCall": 20,
-		"counter":     0,
 	}
-	properties["counter"] = int(math.Ceil(float64(properties["totalRows"]) / float64(properties["rowsPerCall"])))
-	systemInstruction := fmt.Sprintf(`You are a built-in tool to parse the user's prompt to generate a dummy data. Your task is to create an array of prompts, each of which will be used to generate a chunk of dummy data (maximum of %d rows per call) to avoid running into the token limit for the model.
-	
+	systemInstruction := fmt.Sprintf(`You are a built-in tool to parse the user's prompt to generate a dummy data with given JSON schema. Your task is to create an array of prompts, each of which will be used to generate a chunk of dummy data (maximum of %d rows per call) to avoid running into the token limit for the model. Return an error if the prompt is not related to data generation request or dummy data generation request doesn't include any JSON schema.
+
 	For example:
 	User: "Generate %d rows of dummy data for a table that has id, name, and email columns using this JSON schema: Data = {"id": "integer", "name": "string", "email": "string"} Return: Array<Data>"
-	
-	You: "{\"prompt\": \"Generate %d rows of dummy data for a table that has id, name, and email columns using this JSON schema: Data = {\"id\": \"integer\", \"name\": \"string\", \"email\": \"string\"} Return: Array<Data>\", \"counter\": %d}
-	`, properties["rowsPerCall"], properties["totalRows"], properties["totalRows"], properties["counter"])
+	You: "{"prompt": "Generate %d rows of dummy data for a table that has id, name, and email columns using this JSON schema: Data = {"id":"integer","name":"string","email":"string"} Return = Array<Data>","totalRows":%d,"newTotalRows":%d}
+	`, properties["rowsPerCall"], properties["totalRows"], properties["rowsPerCall"], properties["totalRows"], properties["rowsPerCall"])
+	fmt.Println(systemInstruction)
 	model := client.GenerativeModel("gemini-1.5-flash-002")
 	model.Tools = []*genai.Tool{promptParser}
 	model.SystemInstruction = &genai.Content{
@@ -60,7 +61,8 @@ func main() {
 	}
 	session := model.StartChat()
 
-	prompt := `Create 149 dummy cookie recipes using this JSON schema: Recipe = {'recipeName': string} Return: Array<Recipe>`
+	prompt := `Create 1000 dummy game statistics data with this JSON schema: GameDetails = {'player_name': string, 'accuracy_percentage': integer, 'device': string} Return: Array<GameDetails>`
+	// prompt := `list 5 cloud run region`
 	resp, err := session.SendMessage(ctx, genai.Text(prompt))
 	if err != nil {
 		log.Fatalf("Error sending message: %v\n", err)
@@ -70,6 +72,7 @@ func main() {
 	part := resp.Candidates[0].Content.Parts[0]
 	funcall, ok := part.(genai.FunctionCall)
 	if !ok {
+		//FIXME: somehow it return this error: Expected type FunctionCall, got genai.Text
 		log.Fatalf("Expected type FunctionCall, got %T", part)
 	}
 	if g, e := funcall.Name, promptParser.FunctionDeclarations[0].Name; g != e {
