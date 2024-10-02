@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"os"
 
 	"cloud.google.com/go/vertexai/genai"
@@ -21,7 +22,7 @@ func main() {
 						Type:        genai.TypeString,
 						Description: "Rewritten prompt with modified expected number of rows to be generated and follow the system instructions",
 					},
-					"totalRows": {
+					"expectedTotalRows": {
 						Type:        genai.TypeInteger,
 						Description: "The original number of rows requested in the prompts",
 					},
@@ -30,7 +31,7 @@ func main() {
 						Description: "The new number of rows given the limit that set in the system instructions",
 					},
 				},
-				Required: []string{"prompt", "totalRows", "newTotalRows"},
+				Required: []string{"prompt", "expectedTotalRows", "newTotalRows"},
 			},
 		}},
 	}
@@ -42,16 +43,17 @@ func main() {
 	}
 
 	properties := map[string]int{
-		"totalRows":   101,
-		"rowsPerCall": 20,
+		"expectedTotalRows": 101,
+		"rowsPerCall":       20,
 	}
 	systemInstruction := fmt.Sprintf(`You are a built-in tool to parse the user's prompt to generate a dummy data with given JSON schema. Your task is to create an array of prompts, each of which will be used to generate a chunk of dummy data (maximum of %d rows per call) to avoid running into the token limit for the model. Return an error if the prompt is not related to data generation request or dummy data generation request doesn't include any JSON schema.
 
 	For example:
 	User: "Generate %d rows of dummy data for a table that has id, name, and email columns using this JSON schema: Data = {"id": "integer", "name": "string", "email": "string"} Return: Array<Data>"
-	You: "{"prompt": "Generate %d rows of dummy data for a table that has id, name, and email columns using this JSON schema: Data = {"id":"integer","name":"string","email":"string"} Return = Array<Data>","totalRows":%d,"newTotalRows":%d}
-	`, properties["rowsPerCall"], properties["totalRows"], properties["rowsPerCall"], properties["totalRows"], properties["rowsPerCall"])
+	You: "{"prompt": "Generate %d rows of dummy data for a table that has id, name, and email columns using this JSON schema: Data = {"id":"integer","name":"string","email":"string"} Return = Array<Data>","expectedTotalRows":%d,"newTotalRows":%d}
+	`, properties["rowsPerCall"], properties["expectedTotalRows"], properties["rowsPerCall"], properties["expectedTotalRows"], properties["rowsPerCall"])
 	fmt.Println(systemInstruction)
+
 	model := client.GenerativeModel("gemini-1.5-flash-002")
 	model.Tools = []*genai.Tool{promptParser}
 	model.SystemInstruction = &genai.Content{
@@ -61,7 +63,7 @@ func main() {
 	}
 	session := model.StartChat()
 
-	prompt := `Create 1000 dummy game statistics data with this JSON schema: GameDetails = {'player_name': string, 'accuracy_percentage': integer, 'device': string} Return: Array<GameDetails>`
+	prompt := `Create 50 dummy game statistics data with this JSON schema: GameDetails = {'player_name': string, 'accuracy_percentage': integer, 'device': string} Return: Array<GameDetails>`
 	// prompt := `list 5 cloud run region`
 	resp, err := session.SendMessage(ctx, genai.Text(prompt))
 	if err != nil {
@@ -80,26 +82,43 @@ func main() {
 	}
 	fmt.Printf("Received function call response:\n%q\n\n", part)
 
-	apiResult, err := setPrompt(ctx, client, funcall.Args)
-	if err != nil {
-		log.Fatalf("Error setting prompt: %v", err)
+	fmt.Printf("Calling actual function:\n")
+	apiResult := processPrompt(ctx, client, funcall.Args)
+	if len(apiResult["errors"].([]error)) > 0 {
+		log.Fatalf("Error setting prompt: %v", apiResult["errors"])
 	}
-	fmt.Printf("Calling actual function for one time only:\n")
-	printResponse(apiResult)
+	fmt.Printf("Length of result: %d\n", len(apiResult["results"].([]*genai.GenerateContentResponse)))
+
+	fmt.Print("Sample result: \n")
+	results := apiResult["results"].([]*genai.GenerateContentResponse)[0]
+	printResponse(results)
 }
 
-func setPrompt(ctx context.Context, client *genai.Client, input map[string]any) (*genai.GenerateContentResponse, error) {
+func processPrompt(ctx context.Context, client *genai.Client, input map[string]any) map[string]any {
+	iter := int(math.Ceil(input["expectedTotalRows"].(float64) / input["newTotalRows"].(float64)))
+	resps := make([]*genai.GenerateContentResponse, iter)
+	errs := make([]error, 0)
+
 	model := client.GenerativeModel("gemini-1.5-flash-002")
 	model.ResponseMIMEType = "application/json"
 
-	// Generate content using the configured model
-	prompt := fmt.Sprintf("%v", input["prompt"])
-	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
-	if err != nil {
-		return nil, fmt.Errorf("error generating text: %w", err)
+	for i := 0; i < int(iter); i++ {
+		fmt.Println("iter", i)
+		// Generate content using the configured model
+		prompt := fmt.Sprintf("%v", input["prompt"])
+		resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+		if err != nil {
+			errs = append(errs, err)
+		}
+
+		resps[i] = resp
 	}
 
-	return resp, nil
+	return map[string]any{
+		"results": resps,
+		"errors":  errs,
+		"status":  "success",
+	}
 }
 
 func printResponse(resp *genai.GenerateContentResponse) {
